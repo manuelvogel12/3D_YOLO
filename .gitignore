@@ -1,4 +1,11 @@
 *.pt
 *.pth
+*.bin
+*.tar.gz
+*.tar
 cache/
 .idea/
+output/
+runs/
+sub*/
+Sub*/

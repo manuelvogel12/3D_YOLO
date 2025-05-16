@@ -13,5 +13,11 @@ pandas
 
 # unik3d  # for UNIK3D as depth estimation method
 # transformers  # for depth anything as depth estimation method
-# waymo-open-dataset-tf-2-12-0  # for waymo dataset
 # open3d  # visulaization
+
+
+########################################
+#       Needed for Waymo Submission    #
+########################################
+# waymo-open-dataset-tf-2-12-0 --no-deps
+# tensorflow

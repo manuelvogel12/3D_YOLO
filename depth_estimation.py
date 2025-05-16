@@ -1,17 +1,24 @@
 from abc import ABC, abstractmethod
+from typing import Union
 
 from PIL import Image
 import numpy as np
 import torch
 import logging
 
+try:
+    from unik3d.models import UniK3D
+    from unik3d.utils.camera import OPENCV, Pinhole
+except ImportError:
+    print("Unik3D not installed. Please use DepthAnyhing as depth estimator.")
+
 
 class DepthEstimator(ABC):
-    def __init__(self):
+    def __init__(self, size="Small"):
         pass
 
     @abstractmethod
-    def __call__(self, image, **kwargs):
+    def __call__(self, image: Union[Image, np.ndarray, torch.Tensor], **kwargs) -> torch.Tensor:
         pass
 
 
@@ -23,6 +30,7 @@ class DepthAnything(DepthEstimator):
         logging.getLogger("transformers").setLevel(logging.ERROR)
         # size options: "Small", "Base", "Large"
         self.pipe = pipeline(task="depth-estimation", model=f"depth-anything/Depth-Anything-V2-Metric-Outdoor-{size}-hf", use_fast=True)
+        self.name = f"DepthAnything{size}"
 
 
     def __call__(self, image, **kwargs):
@@ -38,28 +46,29 @@ class DepthAnything(DepthEstimator):
 
 
 class Unik3D(DepthEstimator):
-    def __init__(self):
+    def __init__(self, size="Large"):
         super().__init__()
-        from unik3d.models import UniK3D
-        from unik3d.utils.camera import OPENCV, Pinhole
 
         # Move to CUDA, if any
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = UniK3D.from_pretrained("lpiccinelli/unik3d-vitl").to(self.device)
+        vit_version = "vitl" if size == "Large" else "vitb"
+        self.model = UniK3D.from_pretrained(f"lpiccinelli/unik3d-{vit_version}").to(self.device)
+        self.model.resolution_level=4 # between 1 and 9, lower is faster, higher is (allegedly) more accurate
+        self.name = f"Unik3D"
 
         # Load the RGB image and the normalization will be taken care of by the model
         # image_path = "input.jpg"
         # rgb = torch.from_numpy(np.array(Image.open(image_path))).permute(2, 0, 1)  # C, H, W
 
 
-    def native_infer(self, torch_image, fx, fy, cx, cy):
+    def native_infer(self, torch_image, f_x, f_y, c_x, c_y):
         # torch_image: torch.Tensor shape (3, H, W)
         rgb = torch_image.to(self.device)
 
-        cam_params = torch.tensor([fx,
-                                   fy,
-                                   cx,
-                                   cy,
+        cam_params = torch.tensor([f_x,
+                                   f_y,
+                                   c_x,
+                                   c_y,
                                    0.000000000000000000e+00,
                                    0.000000000000000000e+00,
                                    0.000000000000000000e+00,
@@ -70,10 +79,10 @@ class Unik3D(DepthEstimator):
         waymo_camera = OPENCV(cam_params)
 
         predictions = torch.clamp(self.model.infer(rgb, waymo_camera)["depth"],0,100)[0,0].cpu()
-        return predictions.numpy()
+        return predictions
 
 
-    def __call__(self, image, fx, fy, cx, cy):
+    def __call__(self, image, f_x, f_y, c_x, c_y, **kwargs):
 
         match image:
             case Image.Image():
@@ -85,7 +94,7 @@ class Unik3D(DepthEstimator):
             case _:
                 raise TypeError(f"Unsupported image type: {type(image)}")
 
-        depth = self.native_infer(torch_image, fx, fy, cx, cy)
+        depth = self.native_infer(torch_image, f_x, f_y, c_x, c_y)
 
         assert depth.ndim == 2
         return depth
