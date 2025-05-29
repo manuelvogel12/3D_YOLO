@@ -1,5 +1,5 @@
 import numpy as np
-
+import torch
 
 def compute_distances_from_z_values(z_values, u_array, v_array, f_u, f_v, c_u, c_v):
     x_values = (u_array - c_u) * z_values / f_u
@@ -96,3 +96,48 @@ def backproject_pixels_using_depth(uv1, K_inv, ext, depth, dist_offsets=None):
     points_world = R @ unprojected + t
 
     return points_world  # shape: (3, N)
+
+
+def depth_to_pointcloud(depth: torch.Tensor, mask: (torch.Tensor|None),
+                        fx: float, fy: float, cx: float, cy: float):
+    """
+    Convert depth image and mask to a point cloud using explicit intrinsics.
+
+    Args:
+        depth: (H, W) tensor of depth values
+        mask: (H, W) tensor with True where depth is valid, False elsewhere (Optional)
+        fx, fy: focal lengths
+        cx, cy: principal point
+
+    Returns:
+        points: (N, 3) tensor of 3D points
+    """
+    if mask is None:
+        mask = torch.ones_like(depth, dtype=torch.bool)
+
+    device = depth.device
+    H, W = depth.shape
+
+    # Create pixel coordinate grid
+    y, x = torch.meshgrid(torch.arange(H, device=device), torch.arange(W, device=device), indexing='ij')
+    x = x.float()
+    y = y.float()
+
+    # Flatten
+    x = x.reshape(-1)
+    y = y.reshape(-1)
+    z = depth.reshape(-1)
+    mask_reshaped = mask.reshape(-1)
+
+    # Apply mask
+    x = x[mask_reshaped]
+    y = y[mask_reshaped]
+    z = z[mask_reshaped]
+
+    # Back-project
+    X = (x - cx) * z / fx
+    Y = (y - cy) * z / fy
+    Z = z
+
+    points = torch.stack((X, Y, Z), dim=1)  # (N, 3)
+    return points

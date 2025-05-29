@@ -53,7 +53,7 @@ class Unik3D(DepthEstimator):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         vit_version = "vitl" if size == "Large" else "vitb"
         self.model = UniK3D.from_pretrained(f"lpiccinelli/unik3d-{vit_version}").to(self.device)
-        self.model.resolution_level=4 # between 1 and 9, lower is faster, higher is (allegedly) more accurate
+        self.model.resolution_level=9 # between 1 and 9, lower is faster, higher is (allegedly) more accurate
         self.name = f"Unik3D"
 
         # Load the RGB image and the normalization will be taken care of by the model

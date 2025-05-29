@@ -1,9 +1,10 @@
 import matplotlib.pyplot as plt
 from matplotlib import patches
 import numpy as np
+import torch
 from PIL import ImageDraw, Image
 
-from utils.transforms import project_box_to_camera
+from utils.transforms import project_box_to_camera, depth_to_pointcloud
 
 
 def plot(img, gt_bboxes, pred_boxes, K, extr, show=True, save_path=None):
@@ -117,3 +118,89 @@ def plot(img, gt_bboxes, pred_boxes, K, extr, show=True, save_path=None):
         plt.pause(0.5)
     if save_path:
         plt.savefig(save_path)
+
+
+def plot_3d(img_pil, depth, extr, intr, pred_boxes, show=False, save_path=None):
+    """
+    Visualize 3D point cloud with color and predicted 3D boxes.
+
+    :param img_pil: PIL Image
+    :param depth: (H, W) depth tensor
+    :param extr: (4,4) extrinsic matrix (camera to world)
+    :param intr: (3,3) intrinsic matrix
+    :param pred_boxes: np.array of shape (N, 7), each row is [x, y, z, w, l, h, yaw]
+    _:param show: whether to display the plot
+    :param save_path: where to save the plot. If None, the plot is not saved.
+    """
+
+    try:
+        import open3d as o3d
+
+        fx, fy, cx, cy = intr[0, 0], intr[1, 1], intr[0, 2], intr[1, 2]
+
+        # Mask for valid depths
+        mask = (depth > 0) & (depth < 70)
+
+        # Get point cloud and transform to world coords
+        points = depth_to_pointcloud(depth, mask, fx, fy, cx, cy)
+        points = points @ extr[:3, :3].T + extr[:3, 3]
+
+        # Colors from image
+        H, W = depth.shape
+        img_tensor = torch.from_numpy(np.array(img_pil))
+        img_flat = img_tensor.reshape(-1, 3)
+        mask_flat = mask.reshape(-1)
+
+        colors = img_flat[mask_flat].float() / 255.0
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points.cpu().numpy())
+        pcd.colors = o3d.utility.Vector3dVector(colors.cpu().numpy())
+
+        geometries = [pcd]
+
+        # Create boxes as oriented bounding boxes and add them
+        for box in pred_boxes:
+            x, y, z, w, l, h, yaw = box
+
+            # Create box in Open3D with size (w, l, h)
+            box_o3d = o3d.geometry.OrientedBoundingBox()
+
+            # Open3D's box is centered at origin by default
+            box_o3d.center = np.array([x, y, z])
+
+            # Rotation matrix around Y axis (assuming yaw is heading angle)
+            cos_yaw = np.cos(yaw)
+            sin_yaw = np.sin(yaw)
+            R = np.array([
+                [cos_yaw,  sin_yaw,0],
+                [-sin_yaw, cos_yaw, 0 ],
+                [0 ,0, 1]
+            ])
+
+            box_o3d.R = R
+            box_o3d.extent = np.array([w, h, l])  # Note: Open3D extent order is (X, Y, Z)
+
+            # To match typical box parameterization (w,l,h), map accordingly:
+            # Here I put w->X, h->Y, l->Z; adjust if needed depending on conventions
+
+            # Set color for box edges
+            box_mesh = o3d.geometry.LineSet.create_from_oriented_bounding_box(box_o3d)
+            box_mesh.paint_uniform_color([1, 0, 0])  # red boxes
+
+            geometries.append(box_mesh)
+
+        if save_path is not None:
+            np.save(save_path, np.concatenate([points.cpu().numpy(), colors.cpu().numpy()], axis=1))
+
+        if show:
+            o3d.visualization.draw_geometries(
+                geometries,
+                zoom=0.13,
+                front=[-1, 0, 0],
+                lookat=[11, 0, 3],
+                up=[0, 0, 1]  # Z-up
+            )
+
+    except ImportError:
+        print("Open3D not installed, skipping visualization.")

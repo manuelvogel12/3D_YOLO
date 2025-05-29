@@ -19,23 +19,24 @@ from torchvision.models import resnet18, vgg11, ResNet18_Weights
 from torchvision import transforms
 
 from regressor import RegressionNN
-from utils.visualize import plot
+from utils.visualize import plot, plot_3d
 from depth_estimation import DepthAnything, Unik3D # noqa
 from utils.convertions import ultralytics_to_BBox, class_averages_dict
 from utils.transforms import backproject_pixels_using_depth
 
 cfg = SimpleNamespace(
     img_folder=Path("/home/manuel/Repositories/3D_YOLO11/data_0a_sample"),
-    extr_in_world_coordinates=False,
-    track=True,
-    show_result=True,
-    save_result=False,
-    save_to_track=True,
+    extr_in_world_coordinates=False, # whether extrinsics are in xyz or uvz coordinate system
+    track=True,                      # enables the detection over multiple frames
+    show_result=False,               # plot the detection results
+    save_result=False,               # save the above plot
+    save_pc=False,                   # save a point cloud in .npy format
+    save_to_track=True,              # makes the track_info.txt
     yolo_model_name="yolo11x", # one in [yolo11n, yolo11s, yolo11m, yolo11l, yolo11x]
     output_path="infer",
     depth_estimation_name="Unik3D", # one in [DepthAnything, Unik3D]
     depth_estimation_size="Large", # one in [Small, Base, Large]
-
+    camera_idx=1
 )
 
 
@@ -68,9 +69,17 @@ prediction_objects_waymo = defaultdict(dict)
 
 output_dir = Path(cfg.output_path)
 output_dir.mkdir(parents=True, exist_ok=True)
+if cfg.save_to_track:
+    (output_dir / "track").mkdir(parents=True, exist_ok=True)
+if cfg.save_pc:
+    (output_dir / "alignment_pc").mkdir(parents=True, exist_ok=True)
 
 objects = []
-for idx, file_name in tqdm(enumerate(sorted(cfg.img_folder.iterdir()))):
+image_files = sorted(f for f in cfg.img_folder.iterdir() if f.name.endswith(f"_{cfg.camera_idx}.png"))
+for idx, file_name in tqdm(enumerate(image_files)):
+
+    # if idx%10 != 0:
+    #     continue
     waymo_boxes = []
     waymo_classes = []
     waymo_scores = []
@@ -115,7 +124,8 @@ for idx, file_name in tqdm(enumerate(sorted(cfg.img_folder.iterdir()))):
 
         # move to numpy if necessary
         dist_offsets = dist_offsets.numpy(force=True)
-        dist_offsets = np.array([1.5 if cl =="vehicle" else 0.1 for cl in det_classes]) # TODO: REMOVE
+
+        dist_offsets = np.array([1.0 if cl =="vehicle" else 0.1 for cl in det_classes]) # TODO: REMOVE
         # print("WARNING; USING DEFAULT VALUES")
         rotation_offsets = torch.atan2(sin_rotations, cos_rotations).numpy(force=True)
         extent_offsets = extent_offsets.numpy(force=True)
@@ -151,9 +161,9 @@ for idx, file_name in tqdm(enumerate(sorted(cfg.img_folder.iterdir()))):
                 "track_id": int(det.track_id.item()),
                 "object_class": det.detected_class,
                 "alpha": -10,
-                "box_height": float(final_extents[2]), # z
-                "box_width": float(final_extents[1]), # y
-                "box_length": float(final_extents[0]), #x
+                "box_height": float(final_extents[2]) * 1.2, # z
+                "box_width": float(final_extents[1]) * 1.2,  # y
+                "box_length": float(final_extents[0] * 1.2), # x
                 "box_center_x": float(final_location[0]),
                 "box_center_y": float(final_location[1]),
                 "box_center_z": float(final_location[2]),
@@ -166,7 +176,11 @@ for idx, file_name in tqdm(enumerate(sorted(cfg.img_folder.iterdir()))):
     waymo_boxes, waymo_classes, waymo_scores = np.array(waymo_boxes), np.array(waymo_classes), np.array(waymo_scores)
 
 
-    if cfg.show_result or cfg.save_result:
+
+    if cfg.show_result or cfg.save_result or cfg.save_pc:
+
+        save_pc_path = output_dir / "alignment_pc" /  f"{frame_id:06d}.npy" if cfg.save_pc else None
+        plot_3d(img_pil=img_pil, depth=depth, extr=extr, intr=intr, pred_boxes=waymo_boxes, show=cfg.show_result, save_path=save_pc_path)
 
         save_path = output_dir / f"{idx}.png" if cfg.save_result else None
         plot(img=img_pil, gt_bboxes=np.array([]) , pred_boxes=waymo_boxes, K=intr[:3,:3], extr=extr, show=cfg.show_result, save_path=save_path)
