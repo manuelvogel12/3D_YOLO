@@ -74,11 +74,11 @@ if __name__ == "__main__":
     # ----- Config -----
     class_names = class_averages_dict.keys()
     batch_size = 16
-    num_epochs = 10
+    num_epochs = 15
     batches_per_epoch = 1000
     val_batches_per_epoch = 200
-    lr = 8e-5
-    save_path = "regression_model.pt"
+    lr = 1e-4
+    save_path = "e4_regression_model.pt"
 
     # ----- Transforms -----
     transform = transforms.Compose([
